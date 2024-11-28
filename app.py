@@ -47,14 +47,15 @@ async def get_max_pages(base_url):
         page_links = soup.find_all("a", href=True, string=re.compile(r"\d+$"))
         return max((int(link.get_text(strip=True)) for link in page_links if link.get_text(strip=True).isdigit()), default=1)
 
-async def scrape_pages(base_url, total_pages):
-    """Scrape pages concurrently."""
+async def scrape_pages(base_url, total_pages, progress_callback):
+    """Scrape pages concurrently and update progress."""
     async with aiohttp.ClientSession() as session:
         semaphore = asyncio.Semaphore(SEMAPHORE_LIMIT)
         async def scrape_single_page(page_num):
             url = f"{base_url}/{page_num}"
             async with semaphore:
                 content = await fetch_page(session, url)
+                progress_callback(page_num)
                 return page_num, content
         tasks = [scrape_single_page(i) for i in range(1, total_pages + 1)]
         return await asyncio.gather(*tasks)
@@ -127,7 +128,15 @@ if url_input and st.button("Start"):
         try:
             url = clean_url(url_input)  # Clean the URL
             pages_to_scrape = int(pages_input) if pages_input != "All" else asyncio.run(get_max_pages(url))
-            scraped_pages = asyncio.run(scrape_pages(url, pages_to_scrape))
+            
+            # Initialize progress bar
+            progress_bar = st.progress(0)
+
+            # Define a callback to update the progress bar
+            def progress_callback(page_num):
+                progress_bar.progress(page_num / pages_to_scrape)
+
+            scraped_pages = asyncio.run(scrape_pages(url, pages_to_scrape, progress_callback))
             posts = [post for _, content in scraped_pages for post in parse_posts(content, url)]
             st.write(f"Processed {len(posts)} posts from {pages_to_scrape} pages.")
             st.subheader("Analysis Summary")
