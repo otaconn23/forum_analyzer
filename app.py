@@ -14,7 +14,7 @@ openai.api_key = st.secrets["OPENAI_API_KEY"]
 # Constants for async fetching and AI processing
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 SEMAPHORE_LIMIT = 100
-CHUNK_SIZE = 50
+CHUNK_SIZE = 5  # We can try reducing the chunk size to fit within the token limit
 
 # Utility: Time formatting
 def format_time(seconds):
@@ -89,16 +89,22 @@ def ai_request(prompt, model):
 
 def analyze_posts(posts, model):
     """Analyze scraped posts with OpenAI."""
-    chunks = ["\n".join(f"[{p['number']} | {p['date']}] {p['content']}" for p in posts[i:i + CHUNK_SIZE]) for i in range(0, len(posts), CHUNK_SIZE)]
     insights = []
-    for chunk in chunks:
+    # Chunk the posts into smaller segments to avoid token overflow
+    chunked_posts = [posts[i:i + CHUNK_SIZE] for i in range(0, len(posts), CHUNK_SIZE)]
+    
+    for chunk in chunked_posts:
+        chunk_text = "\n".join(
+            [f"[{p['number']} | {p['date']}] {p['content']}" for p in chunk]
+        )
         prompt = (
             "Analyze the following forum posts. Extract:\n"
             "1. Deals, navigation paths, and fringe benefits (with post numbers).\n"
             "2. The best deal and relevant risks.\n\n"
-            f"{chunk}"
+            f"{chunk_text}"
         )
         insights.append(ai_request(prompt, model))
+    
     return "\n\n".join(insights)
 
 # Streamlit UI
