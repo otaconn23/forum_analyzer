@@ -8,10 +8,8 @@ from time import time
 from datetime import timedelta
 from urllib.parse import urlparse, urlunparse
 
-# Load OpenAI API key
+# Global constants
 openai.api_key = st.secrets["OPENAI_API_KEY"]
-
-# Constants for async fetching and AI processing
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 SEMAPHORE_LIMIT = 100
 CHUNK_SIZE = 50
@@ -44,18 +42,17 @@ async def get_max_pages(base_url):
         if not page_content:
             return 1
         soup = BeautifulSoup(page_content, "lxml")
-        page_links = soup.find_all("a", href=True, string=re.compile(r"\d+$"))
+        page_links = soup.select("a[href*='page']")
         return max((int(link.get_text(strip=True)) for link in page_links if link.get_text(strip=True).isdigit()), default=1)
 
-async def scrape_pages(base_url, total_pages, progress_callback):
-    """Scrape pages concurrently and update progress."""
+async def scrape_pages(base_url, total_pages):
+    """Scrape pages concurrently."""
     async with aiohttp.ClientSession() as session:
         semaphore = asyncio.Semaphore(SEMAPHORE_LIMIT)
         async def scrape_single_page(page_num):
             url = f"{base_url}/{page_num}"
             async with semaphore:
                 content = await fetch_page(session, url)
-                progress_callback(page_num)
                 return page_num, content
         tasks = [scrape_single_page(i) for i in range(1, total_pages + 1)]
         return await asyncio.gather(*tasks)
@@ -66,10 +63,10 @@ def parse_posts(page_content, base_url):
         return []
     soup = BeautifulSoup(page_content, "lxml")
     parsed = []
-    for post in soup.find_all("section", class_="post_body"):
-        content = post.find("div", class_="content")
-        date = post.find("time")
-        number = post.find("a", class_="anchor")
+    for post in soup.select(".post-body"):
+        content = post.select_one(".content")
+        date = post.select_one(".date")
+        number = post.select_one(".number")
         parsed.append({
             "number": number.get_text(strip=True) if number else "N/A",
             "date": date.get("datetime") if date else "Unknown",
@@ -104,57 +101,42 @@ def analyze_posts(posts, model):
 # Streamlit UI
 st.title("Forum Analyzer")
 
-# Input for forum URL with 'Paste' and 'Go' buttons
-url_input = st.text_input("Enter URL:", key="url_input", help="Paste the URL of the forum thread you want to analyze.")
+# Input for forum URL with a subtle "Paste" button
+st.write(
+    """
+    <div style="display: flex; align-items: center;">
+        <input id="url_input" style="flex: 1; padding: 5px;" placeholder="Enter URL">
+        <button id="paste_button" style="background-color: gray; color: white; border: none; margin-left: 5px; padding: 5px 10px;">Paste</button>
+        <button id="go_button" style="border-radius: 50%; border: none; background-color: #4CAF50; color: white; padding: 5px 10px; margin-left: 5px;">Go</button>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
-# Input for pages to scrape and model selection, both on the same line
-col1, col2 = st.columns([1, 1])  # Set columns to be equal width
-with col1:
-    pages_input = st.text_input(
-        "Pages to scrape:", 
-        "All", 
-        help="Number of pages to scrape. Type 'All' for all pages. You can enter a specific number (e.g., 10) or leave it blank for 'All'."
-    )
-with col2:
-    model_choice = st.selectbox(
-        "Choose a model:", 
-        ["gpt-4", "gpt-3.5-turbo"], 
-        help="Choose the model for analysis. GPT-4 provides better accuracy but is slower, while GPT-3.5 is faster and more efficient."
-    )
+# Fetch the default number of pages dynamically
+default_pages = asyncio.run(get_max_pages(url)) if url else None
+if default_pages:
+    st.write(f"Max pages detected: {default_pages}")
+
+# Input for number of pages with default option "All"
+pages_input = st.text_input(
+    "Pages to scrape:",
+    value="All", 
+    placeholder="Enter number of pages or leave blank to scrape all",
+    help="Enter number of pages to scrape or leave blank for all"
+)
+model_choice = st.selectbox(
+    "Choose a model:",
+    options=["gpt-3.5-turbo", "gpt-4"],
+    help="Choose a model for analyzing forum posts (gpt-3.5-turbo is faster, gpt-4 is more accurate)."
+)
 
 # Main scraping and analysis logic
-if url_input and st.button("Start"):
+if url and st.button("Start"):
     with st.spinner("Processing..."):
         try:
-            url = clean_url(url_input)  # Clean the URL
-            pages_to_scrape = int(pages_input) if pages_input != "All" else asyncio.run(get_max_pages(url))
-            
-            # Initialize progress bar
-            progress_bar = st.progress(0)
-            elapsed_time = time()
-            pages_scraped = 0
-            
-            # Define a callback to update the progress bar
-            def progress_callback(page_num):
-                nonlocal pages_scraped, elapsed_time
-                pages_scraped += 1
-                elapsed_seconds = time() - elapsed_time
-                pages_per_second = pages_scraped / elapsed_seconds if elapsed_seconds > 0 else 0
-                remaining_pages = pages_to_scrape - pages_scraped
-                remaining_time = remaining_pages / pages_per_second if pages_per_second > 0 else 0
-                progress_percent = (pages_scraped / pages_to_scrape) * 100
-                
-                # Update the progress bar and show stats
-                progress_bar.progress(progress_percent)
-                elapsed_time_str = format_time(elapsed_seconds)
-                remaining_time_str = format_time(remaining_time)
-                
-                # Show stats below the progress bar
-                st.write(f"Progress: {pages_scraped}/{pages_to_scrape} pages ({progress_percent:.2f}%)")
-                st.write(f"Elapsed: {elapsed_time_str} | Remaining: {remaining_time_str} | {pages_per_second:.2f} pages/s")
-            
-            # Start scraping
-            scraped_pages = asyncio.run(scrape_pages(url, pages_to_scrape, progress_callback))
+            pages_to_scrape = default_pages if pages_input.lower() == "all" else int(pages_input)
+            scraped_pages = asyncio.run(scrape_pages(url, pages_to_scrape))
             posts = [post for _, content in scraped_pages for post in parse_posts(content, url)]
             st.write(f"Processed {len(posts)} posts from {pages_to_scrape} pages.")
             st.subheader("Analysis Summary")
