@@ -4,7 +4,6 @@ import asyncio
 from bs4 import BeautifulSoup
 import openai
 import re
-from datetime import datetime
 
 # Configure OpenAI API key
 openai.api_key = st.secrets["OPENAI_API_KEY"]
@@ -14,111 +13,83 @@ headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 }
 
-semaphore = asyncio.Semaphore(50)  # Limit concurrency for safety
+semaphore = asyncio.Semaphore(50)  # Limit concurrency
 
 
-# Function to fetch a single page
 async def fetch_page(session, url):
     async with semaphore:
         async with session.get(url) as response:
             return await response.text()
 
 
-# Function to determine the maximum number of pages
-async def get_max_pages(base_url):
+async def scrape_forum_pages(base_url, pages_to_scrape=None):
     async with aiohttp.ClientSession(headers=headers) as session:
+        # Assume a single-page forum for simplicity; add pagination logic if needed
         page_content = await fetch_page(session, base_url)
         soup = BeautifulSoup(page_content, "html.parser")
-        last_page = soup.find("a", string=re.compile(r"\d+$"))
-        if last_page:
-            return int(last_page.string)
-        return 1
+        posts = soup.find_all("section", class_="post_body")
+        return [post.get_text(strip=True) for post in posts]
 
 
-# Function to scrape a single page
-async def scrape_page(session, page_num, base_url):
-    page_url = f"{base_url}/{page_num}/"
-    page_content = await fetch_page(session, page_url)
-    soup = BeautifulSoup(page_content, "html.parser")
-    posts = soup.find_all("section", class_="post_body")
-    posts_content = []
-    for post in posts:
-        content_div = post.find("div", class_="content")
-        if content_div:
-            posts_content.append(content_div.get_text(strip=True))
-    return posts_content
-
-
-# Function to scrape all forum pages
-async def scrape_forum_pages(base_url, pages_to_scrape=None):
-    max_pages = await get_max_pages(base_url)
-    pages_to_scrape = pages_to_scrape or max_pages
-    async with aiohttp.ClientSession(headers=headers) as session:
-        tasks = [
-            scrape_page(session, page_num, base_url)
-            for page_num in range(1, pages_to_scrape + 1)
-        ]
-        results = await asyncio.gather(*tasks)
-    return [post for page_posts in results for post in page_posts]
-
-
-# Function to analyze posts
 def analyze_posts(posts):
-    combined_posts = "\n".join(posts[:50])  # Analyze up to the first 50 posts
+    combined_posts = "\n".join(posts[:50])  # Use the first 50 posts for analysis
     messages = [
-        {"role": "system", "content": "You are an assistant specialized in summarizing forum discussions."},
+        {"role": "system", "content": "You are a helpful assistant that summarizes forum discussions."},
         {"role": "user", "content": (
-            "Analyze the following forum posts. Identify:\n"
-            "1. The deal being offered and its details.\n"
-            "2. User feedback on the deal.\n"
-            "3. Conclusions about whether the deal is worthwhile.\n"
-            "4. Ignore outdated or irrelevant information.\n\n"
+            "Analyze the following forum posts:\n"
+            "1. Summarize the deal being discussed.\n"
+            "2. Extract user opinions (positive and negative).\n"
+            "3. Provide your conclusion about the quality of the deal.\n\n"
             f"{combined_posts}"
         )}
     ]
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=messages
-    )
-    return response['choices'][0]['message']['content'].strip()
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=messages
+        )
+        return response['choices'][0]['message']['content']
+    except Exception as e:
+        st.error(f"OpenAI API Error: {e}")
+        return None
 
 
-# Streamlit app interface
 st.title("Forum Analyzer")
-url = st.text_input("Enter the forum URL to analyze:")
-pages_to_scrape = st.number_input("Number of pages to scrape (default = all):", min_value=1, step=1, value=1)
+url = st.text_input("Enter the forum URL:")
+pages_to_scrape = st.number_input("Number of pages to scrape:", min_value=1, value=1, step=1)
 
 if url:
     try:
-        # Scrape forum data
-        st.write("Fetching and scraping forum posts...")
+        st.write("Scraping forum data...")
         posts = asyncio.run(scrape_forum_pages(url, pages_to_scrape))
         if posts:
-            st.write(f"Scraped {len(posts)} posts!")
-            
-            # Analyze and summarize posts
-            st.write("Analyzing posts with OpenAI...")
+            st.write(f"Scraped {len(posts)} posts.")
+            st.write("Analyzing posts...")
             summary = analyze_posts(posts)
-            st.subheader("Analysis Summary:")
-            st.write(summary)
+            if summary:
+                st.subheader("Summary")
+                st.write(summary)
 
-            # Interactive chat for follow-ups
-            user_question = st.text_input("Ask a follow-up question about the forum discussion:")
+            # Allow follow-up questions
+            user_question = st.text_input("Ask a follow-up question:")
             if user_question:
                 followup_messages = [
-                    {"role": "system", "content": "You are an assistant specialized in answering questions about forum discussions."},
+                    {"role": "system", "content": "You are a helpful assistant that answers questions based on forum discussions."},
                     {"role": "user", "content": (
-                        f"Based on the following forum posts:\n\n{posts[:50]}\n\n"
-                        f"Answer the user's question: {user_question}"
+                        f"Based on these forum posts:\n\n{posts[:50]}\n\n"
+                        f"Answer this question: {user_question}"
                     )}
                 ]
-                followup_response = openai.ChatCompletion.create(
-                    model="gpt-3.5-turbo",
-                    messages=followup_messages
-                )
-                st.subheader("Follow-up Answer:")
-                st.write(followup_response['choices'][0]['message']['content'].strip())
+                try:
+                    followup_response = openai.ChatCompletion.create(
+                        model="gpt-3.5-turbo",
+                        messages=followup_messages
+                    )
+                    st.subheader("Follow-Up Answer")
+                    st.write(followup_response['choices'][0]['message']['content'])
+                except Exception as e:
+                    st.error(f"OpenAI Follow-Up Error: {e}")
         else:
-            st.warning("No posts found. Please check the URL or try a different forum.")
+            st.warning("No posts were found.")
     except Exception as e:
-        st.error(f"An error occurred: {e}")
+        st.error(f"Error: {e}")
