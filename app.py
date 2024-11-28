@@ -101,25 +101,35 @@ def analyze_posts(posts, model):
 # Streamlit UI
 st.title("Forum Analyzer")
 
-# Input for forum URL with a subtle "Paste" button
-col1, col2 = st.columns([5, 1])
+# URL Input Section with "Paste" and "Go" buttons
+col1, col2, col3 = st.columns([4, 1, 1])
 
+# Paste button to populate URL input box
 with col1:
-    url_input = st.text_input("Enter URL:")
+    url_input = st.text_input("Enter URL:", key="url_input", help="Paste the URL of the forum thread you want to analyze.")
 
+# Paste button to fill the URL input box
 with col2:
     paste_button = st.button("Paste", key="paste_button")
 
-# URL paste functionality
+# Go button
+with col3:
+    go_button = st.button("Go", key="go_button")
+
+# URL paste functionality (optional)
 if paste_button:
-    st.experimental_set_query_params(url=url_input)  # This will update the URL field with pasted URL from clipboard
+    url_input = st.text_input("Enter URL:", value=url_input)
+
+# URL cleaning
+if url_input:
+    clean_url_value = clean_url(url_input)
 
 # Fetch the default number of pages dynamically only if URL is provided
 default_pages = None
-if url_input:
+if clean_url_value:
     st.write("Fetching max pages for the thread...")
     try:
-        default_pages = asyncio.run(get_max_pages(clean_url(url_input)))
+        default_pages = asyncio.run(get_max_pages(clean_url_value))
         st.write(f"Max pages detected: {default_pages}")
     except Exception as e:
         st.warning(f"Could not determine max pages: {e}")
@@ -128,17 +138,26 @@ if url_input:
 # Input for number of pages with default option "All"
 pages_input = st.selectbox(
     "Pages to scrape:",
-    ["All"] + [str(i) for i in range(1, default_pages + 1)] if default_pages else ["1"]
+    ["All"] + [str(i) for i in range(1, default_pages + 1)] if default_pages else ["1"],
+    index=0,  # Default to "All"
+    help="Select the number of pages to scrape. 'All' scrapes all available pages."
 )
-model_choice = st.radio("Model:", [("gpt-4", "Accurate (Default)"), ("gpt-3.5-turbo", "Faster")], format_func=lambda x: x[1])
+
+# Model selection with tooltips
+model_choice = st.radio(
+    "Model:",
+    [("gpt-4", "Accurate (Default)"), ("gpt-3.5-turbo", "Faster")],
+    format_func=lambda x: x[1],
+    help="Choose the AI model: 'Faster' for quick results, 'Accurate' for more detailed analysis."
+)
 
 # Main scraping and analysis logic
-if url_input and st.button("Start"):
+if clean_url_value and go_button:
     with st.spinner("Processing..."):
         try:
             pages_to_scrape = default_pages if pages_input == "All" else int(pages_input)
-            scraped_pages = asyncio.run(scrape_pages(clean_url(url_input), pages_to_scrape))
-            posts = [post for _, content in scraped_pages for post in parse_posts(content, url_input)]
+            scraped_pages = asyncio.run(scrape_pages(clean_url_value, pages_to_scrape))
+            posts = [post for _, content in scraped_pages for post in parse_posts(content, clean_url_value)]
             st.write(f"Processed {len(posts)} posts from {pages_to_scrape} pages.")
             st.subheader("Analysis Summary")
             st.write(analyze_posts(posts, model_choice[0]))
