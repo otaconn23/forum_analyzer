@@ -3,13 +3,16 @@ import aiohttp
 import asyncio
 import openai
 from bs4 import BeautifulSoup
+import json
 import re
 from time import time
 from datetime import timedelta
 from urllib.parse import urlparse, urlunparse
 
-# Global constants
+# Load OpenAI API key
 openai.api_key = st.secrets["OPENAI_API_KEY"]
+
+# Constants for async fetching and AI processing
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 SEMAPHORE_LIMIT = 100
 CHUNK_SIZE = 50
@@ -25,15 +28,16 @@ def clean_url(url):
 
 # Asynchronous web fetching
 async def fetch_page(session, url):
-    """Fetch a single page with retries."""
-    for attempt in range(3):
-        try:
-            async with session.get(url, headers=HEADERS, timeout=10) as response:
-                return await response.text()
-        except Exception:
-            if attempt == 2:
-                return None  # Return None after max retries
-            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+    """Fetch a single page asynchronously with retry logic."""
+    async with semaphore:
+        for attempt in range(3):  # Retry up to 3 times
+            try:
+                async with session.get(url, headers=HEADERS, timeout=10) as response:
+                    return await response.text()
+            except Exception as e:
+                if attempt == 2:
+                    return f"Error: {e}"
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
 
 async def get_max_pages(base_url):
     """Fetch maximum page number from the forum."""
@@ -42,38 +46,37 @@ async def get_max_pages(base_url):
         if not page_content:
             return 1
         soup = BeautifulSoup(page_content, "lxml")
-        page_links = soup.select("a[href*='page']")
+        page_links = soup.find_all("a", href=True, string=re.compile(r"\d+$"))
         return max((int(link.get_text(strip=True)) for link in page_links if link.get_text(strip=True).isdigit()), default=1)
 
-async def scrape_pages(base_url, total_pages):
-    """Scrape pages concurrently."""
+async def scrape_forum_pages(base_url, pages_to_scrape):
+    """Scrape forum pages asynchronously."""
     async with aiohttp.ClientSession() as session:
-        semaphore = asyncio.Semaphore(SEMAPHORE_LIMIT)
-        async def scrape_single_page(page_num):
-            url = f"{base_url}/{page_num}"
-            async with semaphore:
-                content = await fetch_page(session, url)
-                return page_num, content
-        tasks = [scrape_single_page(i) for i in range(1, total_pages + 1)]
+        tasks = [
+            fetch_page(session, f"{base_url}/{i}")
+            for i in range(1, pages_to_scrape + 1)
+        ]
         return await asyncio.gather(*tasks)
 
 def parse_posts(page_content, base_url):
-    """Extract posts from a single page."""
-    if not page_content:
-        return []
+    """Parses forum posts from page content."""
     soup = BeautifulSoup(page_content, "lxml")
-    parsed = []
-    for post in soup.select(".post-body"):
-        content = post.select_one(".content")
-        date = post.select_one(".date")
-        number = post.select_one(".number")
-        parsed.append({
-            "number": number.get_text(strip=True) if number else "N/A",
-            "date": date.get("datetime") if date else "Unknown",
-            "content": content.get_text(strip=True) if content else "No content",
-            "url": f"{base_url}#{number.get_text(strip=True)}" if number else base_url
+    parsed_posts = []
+
+    posts = soup.select("section.post_body")  # Adjust selector as per forum structure
+    for post in posts:
+        content_div = post.select_one("div.content")  # Adjust selector as per forum structure
+        date_div = post.select_one("time")  # Adjust selector as per forum structure
+        post_div = post.select_one("a.anchor")  # Adjust selector as per forum structure
+
+        parsed_posts.append({
+            "number": post_div.get_text(strip=True) if post_div else "N/A",
+            "date": date_div.get("datetime") if date_div else "Unknown",
+            "content": content_div.get_text(strip=True) if content_div else "No content",
+            "url": f"{base_url}#{post_div.get_text(strip=True)}" if post_div else base_url
         })
-    return parsed
+
+    return parsed_posts
 
 def ai_request(prompt, model):
     """Reusable AI interaction function."""
@@ -85,58 +88,55 @@ def ai_request(prompt, model):
     return response['choices'][0]['message']['content'].strip()
 
 def analyze_posts(posts, model):
-    """Analyze scraped posts with OpenAI."""
-    chunks = ["\n".join(f"[{p['number']} | {p['date']}] {p['content']}" for p in posts[i:i + CHUNK_SIZE]) for i in range(0, len(posts), CHUNK_SIZE)]
+    """Analyze posts using OpenAI API with post number citations."""
+    chunk_size = 50
+    chunks = ["\n".join([f"[{p['number']} | {p['date']}] {p['content']}" for p in posts[i:i + chunk_size]]) for i in range(0, len(posts), chunk_size)]
     insights = []
+
     for chunk in chunks:
-        prompt = (
-            "Analyze the following forum posts. Extract:\n"
-            "1. Deals, navigation paths, and fringe benefits (with post numbers).\n"
-            "2. The best deal and relevant risks.\n\n"
-            f"{chunk}"
+        messages = [
+            {"role": "system", "content": "You are a deal analysis expert summarizing forum discussions."},
+            {"role": "user", "content": (
+                "Analyze the following forum posts related to a deal thread. Extract only the critical information:\n"
+                "1. Specific deals or unique offers with post numbers.\n"
+                "2. Navigation paths (departments contacted, codes used) with post numbers.\n"
+                "3. Fringe deals or extras received, with post numbers.\n"
+                "4. Evaluate multiple deal options and suggest the best value.\n"
+                "5. Identify risks or drawbacks.\n\n"
+                f"{chunk}"
+            )}
+        ]
+        response = openai.ChatCompletion.create(
+            model=model,
+            messages=messages
         )
-        insights.append(ai_request(prompt, model))
+        insights.append(response['choices'][0]['message']['content'].strip())
+
     return "\n\n".join(insights)
 
 # Streamlit UI
 st.title("Forum Analyzer")
 
-# Input for forum URL with a subtle "Paste" button
-st.write(
-    """
-    <div style="display: flex; align-items: center;">
-        <input id="url_input" style="flex: 1; padding: 5px;" placeholder="Enter URL">
-        <button id="paste_button" style="background-color: gray; color: white; border: none; margin-left: 5px; padding: 5px 10px;">Paste</button>
-        <button id="go_button" style="border-radius: 50%; border: none; background-color: #4CAF50; color: white; padding: 5px 10px; margin-left: 5px;">Go</button>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+# URL Input Box and Pages to Scrape
+col1, col2 = st.columns([1, 1])  # Set columns to be equal width
+with col1:
+    url_input = st.text_input("Enter URL:", key="url_input", placeholder="Paste URL here", help="Enter or paste the URL of the forum thread you want to analyze.")
+with col2:
+    pages_input = st.text_input("Pages to scrape:", "All", help="Number of pages to scrape. Type 'All' for all pages. Enter a number for specific pages.")
 
-# Fetch the default number of pages dynamically
-default_pages = asyncio.run(get_max_pages(url)) if url else None
-if default_pages:
-    st.write(f"Max pages detected: {default_pages}")
-
-# Input for number of pages with default option "All"
-pages_input = st.text_input(
-    "Pages to scrape:",
-    value="All", 
-    placeholder="Enter number of pages or leave blank to scrape all",
-    help="Enter number of pages to scrape or leave blank for all"
-)
 model_choice = st.selectbox(
     "Choose a model:",
-    options=["gpt-3.5-turbo", "gpt-4"],
-    help="Choose a model for analyzing forum posts (gpt-3.5-turbo is faster, gpt-4 is more accurate)."
+    ["gpt-4", "gpt-3.5-turbo"],
+    help="GPT-4 is more accurate, while GPT-3.5 is faster."
 )
 
 # Main scraping and analysis logic
-if url and st.button("Start"):
+if url_input and st.button("Start"):
     with st.spinner("Processing..."):
         try:
-            pages_to_scrape = default_pages if pages_input.lower() == "all" else int(pages_input)
-            scraped_pages = asyncio.run(scrape_pages(url, pages_to_scrape))
+            url = clean_url(url_input)  # Clean the URL
+            pages_to_scrape = int(pages_input) if pages_input != "All" else asyncio.run(get_max_pages(url))
+            scraped_pages = asyncio.run(scrape_forum_pages(url, pages_to_scrape))
             posts = [post for _, content in scraped_pages for post in parse_posts(content, url)]
             st.write(f"Processed {len(posts)} posts from {pages_to_scrape} pages.")
             st.subheader("Analysis Summary")
