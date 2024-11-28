@@ -27,7 +27,7 @@ def clean_url(url):
     return urlunparse(parsed_url._replace(query=""))
 
 # Asynchronous web fetching
-async def fetch_page(session, url):
+async def fetch_page(session, url, semaphore):
     """Fetch a single page asynchronously with retry logic."""
     async with semaphore:
         for attempt in range(3):  # Retry up to 3 times
@@ -42,7 +42,7 @@ async def fetch_page(session, url):
 async def get_max_pages(base_url):
     """Fetch maximum page number from the forum."""
     async with aiohttp.ClientSession() as session:
-        page_content = await fetch_page(session, base_url)
+        page_content = await fetch_page(session, base_url, semaphore=None)  # No need for semaphore here
         if not page_content:
             return 1
         soup = BeautifulSoup(page_content, "lxml")
@@ -51,9 +51,10 @@ async def get_max_pages(base_url):
 
 async def scrape_forum_pages(base_url, pages_to_scrape):
     """Scrape forum pages asynchronously."""
+    semaphore = asyncio.Semaphore(SEMAPHORE_LIMIT)  # Defined semaphore here
     async with aiohttp.ClientSession() as session:
         tasks = [
-            fetch_page(session, f"{base_url}/{i}")
+            fetch_page(session, f"{base_url}/{i}", semaphore)  # Pass semaphore to fetch_page
             for i in range(1, pages_to_scrape + 1)
         ]
         return await asyncio.gather(*tasks)
