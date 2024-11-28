@@ -35,18 +35,18 @@ async def get_max_pages(base_url):
         if not page_content:
             return 1
         soup = BeautifulSoup(page_content, "html.parser")
-        # Generic detection for pagination links
         page_links = soup.find_all("a", string=re.compile(r"\d+"))
         page_numbers = [
             int(link.get_text(strip=True)) 
             for link in page_links 
-            if link.get_text(strip=True).isdigit()  # Ensure numeric text
+            if link.get_text(strip=True).isdigit()
         ]
         return max(page_numbers, default=1)
 
 async def scrape_forum_pages(base_url, pages_to_scrape):
     """Scrape pages asynchronously."""
     semaphore = asyncio.Semaphore(SEMAPHORE_LIMIT)
+    progress = st.empty()  # Placeholder for progress bar
     async with aiohttp.ClientSession() as session:
         tasks = [
             scrape_page(session, i, base_url, semaphore)
@@ -56,7 +56,8 @@ async def scrape_forum_pages(base_url, pages_to_scrape):
         for i, task in enumerate(asyncio.as_completed(tasks), start=1):
             page_data = await task
             results.append(page_data)
-            st.progress(i / pages_to_scrape)  # Update Streamlit progress bar
+            progress.progress(i / pages_to_scrape)  # Update progress dynamically
+        progress.empty()  # Clear progress bar after completion
         return results
 
 async def scrape_page(session, page_num, base_url, semaphore):
@@ -67,23 +68,26 @@ async def scrape_page(session, page_num, base_url, semaphore):
         return page_num, content
 
 def parse_posts(page_content):
-    """Extract posts dynamically without requiring custom selectors."""
+    """Extract unique posts dynamically."""
     if not page_content:
         return []
     soup = BeautifulSoup(page_content, "html.parser")
     parsed = []
-    # Assume posts are within a generic 'section' or 'div' element
+    seen_posts = set()  # Track unique posts by content
     posts = soup.find_all("section", class_=re.compile(r"post|entry")) or soup.find_all("div", class_=re.compile(r"post|entry"))
     for post in posts:
         content = post.find("div", class_=re.compile(r"content|text"))
         date = post.find("time") or post.find("span", class_=re.compile(r"date"))
         number = post.find("a", class_=re.compile(r"post-number|id"))
-        parsed.append({
-            "number": number.get_text(strip=True) if number else "N/A",
-            "date": date.get("datetime") if date and date.has_attr("datetime") else "Unknown",
-            "content": content.get_text(strip=True) if content else "No content",
-            "url": number["href"] if number and number.has_attr("href") else "N/A"
-        })
+        content_text = content.get_text(strip=True) if content else None
+        if content_text and content_text not in seen_posts:
+            seen_posts.add(content_text)
+            parsed.append({
+                "number": number.get_text(strip=True) if number else "N/A",
+                "date": date.get("datetime") if date and date.has_attr("datetime") else "Unknown",
+                "content": content_text,
+                "url": number["href"] if number and number.has_attr("href") else "N/A"
+            })
     return parsed
 
 def ai_request(prompt, model):
@@ -125,7 +129,7 @@ if url_input and st.button("Start"):
         pages_to_scrape = int(pages_input) if pages_input != "All" else asyncio.run(get_max_pages(url))
         scraped_pages = asyncio.run(scrape_forum_pages(url, pages_to_scrape))
         posts = [post for _, content in scraped_pages for post in parse_posts(content)]
-        st.write(f"Processed {len(posts)} posts from {pages_to_scrape} pages.")
+        st.write(f"Processed {len(posts)} unique posts from {pages_to_scrape} pages.")
         st.subheader("Analysis Summary")
         st.write(analyze_posts(posts, model_choice))
     except Exception as e:
