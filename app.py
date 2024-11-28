@@ -104,20 +104,17 @@ def analyze_posts(posts, model):
 st.title("Forum Analyzer")
 
 # Input for forum URL with 'Paste' and 'Go' buttons
-col1, col2, col3 = st.columns([3, 1, 0.5])
-with col1:
-    url_input = st.text_input("Enter URL:", key="url_input", help="Paste the URL of the forum thread you want to analyze.")
-with col2:
-    paste_button = st.button("Paste", key="paste_button")
-with col3:
-    go_button = st.button("Go", key="go_button")
+url_input = st.text_input("Enter URL:", key="url_input", help="Paste the URL of the forum thread you want to analyze.")
 
-# Input for pages to scrape
-pages_input = st.text_input("Pages to scrape:", "All", help="Number of pages to scrape. Type 'All' for all pages.")
-model_choice = st.selectbox("Choose a model:", ["gpt-4", "gpt-3.5-turbo"], help="Choose the model for analysis.")
+# Input for pages to scrape and model selection, both on the same line
+col1, col2 = st.columns([1, 1])  # Set columns to be equal width
+with col1:
+    pages_input = st.text_input("Pages to scrape:", "All", help="Number of pages to scrape. Type 'All' for all pages.")
+with col2:
+    model_choice = st.selectbox("Model:", ["gpt-4", "gpt-3.5-turbo"], help="Choose the model for analysis.")
 
 # Main scraping and analysis logic
-if url_input and go_button:
+if url_input and st.button("Start"):
     with st.spinner("Processing..."):
         try:
             url = clean_url(url_input)  # Clean the URL
