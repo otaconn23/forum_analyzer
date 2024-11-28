@@ -12,7 +12,7 @@ openai.api_key = st.secrets["OPENAI_API_KEY"]
 headers = {"User-Agent": "Mozilla/5.0"}
 
 # Semaphore for concurrency
-semaphore = asyncio.Semaphore(100)  # Increased for faster scraping
+semaphore = asyncio.Semaphore(100)
 
 
 async def fetch_page(session, url):
@@ -26,7 +26,19 @@ async def fetch_page(session, url):
             return ""
 
 
-async def scrape_forum_pages(base_url, pages_to_scrape=None):
+async def get_max_pages(base_url):
+    """Fetches the maximum number of pages in the forum thread."""
+    async with aiohttp.ClientSession(headers=headers) as session:
+        page_content = await fetch_page(session, base_url)
+        soup = BeautifulSoup(page_content, "lxml")
+        # Modify this based on the forum's pagination structure
+        last_page = soup.find("a", string=re.compile(r"\d+$"))
+        if last_page:
+            return int(last_page.string)
+        return 1
+
+
+async def scrape_forum_pages(base_url, pages_to_scrape):
     """Scrapes all forum pages up to the specified number."""
     async with aiohttp.ClientSession(headers=headers, connector=aiohttp.TCPConnector(keepalive_timeout=30)) as session:
         tasks = [fetch_page(session, f"{base_url}/{i}") for i in range(1, pages_to_scrape + 1)]
@@ -40,13 +52,13 @@ def parse_posts(page_content):
     return [post.get_text(strip=True) for post in soup.find_all("section", class_="post_body")]
 
 
-def analyze_posts(posts):
-    """Analyzes posts using OpenAI's API."""
+def analyze_posts(posts, model):
+    """Analyzes posts using OpenAI's API with the selected model."""
     chunks = ["\n".join(posts[i:i + 10]) for i in range(0, len(posts), 10)]
     summaries = []
     for chunk in chunks:
         messages = [
-            {"role": "system", "content": "You are an assistant that summarizes forum discussions."},
+            {"role": "system", "content": "You are a helpful assistant summarizing forum discussions."},
             {"role": "user", "content": (
                 "Analyze the following forum posts:\n"
                 "1. Summarize the deal.\n"
@@ -56,7 +68,7 @@ def analyze_posts(posts):
             )}
         ]
         response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
+            model=model,
             messages=messages
         )
         summaries.append(response['choices'][0]['message']['content'].strip())
@@ -65,16 +77,47 @@ def analyze_posts(posts):
 
 # Streamlit app interface
 st.title("Optimized Forum Analyzer")
-url = st.text_input("Enter the forum URL:")
-pages_to_scrape = st.number_input("Number of pages to scrape:", min_value=1, value=1, step=1)
 
+# Input for forum URL
+url = st.text_input("Enter the forum URL:")
+
+# Fetch the default number of pages dynamically
+default_pages = None
 if url:
+    st.write("Fetching max pages for the thread...")
+    try:
+        default_pages = asyncio.run(get_max_pages(url))
+        st.write(f"Max pages detected: {default_pages}")
+    except Exception as e:
+        st.warning(f"Could not determine max pages: {e}")
+
+# Input for number of pages with default value set to max pages
+pages_to_scrape = st.number_input(
+    "Number of pages to scrape:",
+    min_value=1,
+    value=default_pages or 1,  # Default to 1 if max pages cannot be determined
+    step=1
+)
+
+# Model selection
+model_choice = st.radio(
+    "Choose a model:",
+    options=[
+        ("gpt-3.5-turbo", "Faster (Good for most tasks)"),
+        ("gpt-4", "More Accurate (Better for complex tasks)")
+    ],
+    format_func=lambda x: x[1]
+)
+selected_model = model_choice[0]  # Get the actual model name (gpt-3.5-turbo or gpt-4)
+
+# Main scraping and analysis logic
+if url and pages_to_scrape:
     with st.spinner("Scraping and analyzing..."):
         try:
             posts = asyncio.run(scrape_forum_pages(url, pages_to_scrape))
             if posts:
                 st.write(f"Scraped {len(posts)} posts!")
-                summary = analyze_posts(posts)
+                summary = analyze_posts(posts, selected_model)
                 st.subheader("Analysis Summary")
                 st.write(summary)
             else:
