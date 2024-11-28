@@ -9,10 +9,12 @@ from time import time
 from datetime import timedelta
 from urllib.parse import urlparse, urlunparse
 
-# Load OpenAI API key
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+# Load forum-specific config
+with open("config.json", "r") as f:
+    config = json.load(f)
 
-# Constants for async fetching and AI processing
+# Global constants
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 SEMAPHORE_LIMIT = 100
 CHUNK_SIZE = 50
@@ -28,18 +30,24 @@ def clean_url(url):
 
 # Asynchronous web fetching
 async def fetch_page(session, url):
-    """Fetch a single page asynchronously with retry logic."""
-    async with session.get(url, headers=HEADERS, timeout=10) as response:
-        return await response.text()
+    """Fetch a single page with retries."""
+    for attempt in range(3):
+        try:
+            async with session.get(url, headers=HEADERS, timeout=10) as response:
+                return await response.text()
+        except Exception:
+            if attempt == 2:
+                return None  # Return None after max retries
+            await asyncio.sleep(2 ** attempt)  # Exponential backoff
 
 async def get_max_pages(base_url):
     """Fetch maximum page number from the forum."""
     async with aiohttp.ClientSession() as session:
-        page_content = await fetch_page(session, base_url)  # Use the created session here
+        page_content = await fetch_page(session, base_url)
         if not page_content:
             return 1
         soup = BeautifulSoup(page_content, "lxml")
-        page_links = soup.find_all("a", href=True, string=re.compile(r"\d+$"))
+        page_links = soup.select(config["pagination_selector"])
         return max((int(link.get_text(strip=True)) for link in page_links if link.get_text(strip=True).isdigit()), default=1)
 
 async def scrape_forum_pages(base_url, pages_to_scrape):
@@ -50,27 +58,28 @@ async def scrape_forum_pages(base_url, pages_to_scrape):
             fetch_page(session, f"{base_url}/{i}")  # Pass session to fetch_page
             for i in range(1, pages_to_scrape + 1)
         ]
-        return await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks)
+        
+    # Ensure we return a list of tuples containing (page_number, content)
+    return [(i, results[i-1]) for i in range(1, len(results) + 1)]
 
 def parse_posts(page_content, base_url):
-    """Parses forum posts from page content."""
+    """Extract posts from a single page."""
+    if not page_content:
+        return []
     soup = BeautifulSoup(page_content, "lxml")
-    parsed_posts = []
-
-    posts = soup.select("section.post_body")  # Adjust selector as per forum structure
-    for post in posts:
-        content_div = post.select_one("div.content")  # Adjust selector as per forum structure
-        date_div = post.select_one("time")  # Adjust selector as per forum structure
-        post_div = post.select_one("a.anchor")  # Adjust selector as per forum structure
-
-        parsed_posts.append({
-            "number": post_div.get_text(strip=True) if post_div else "N/A",
-            "date": date_div.get("datetime") if date_div else "Unknown",
-            "content": content_div.get_text(strip=True) if content_div else "No content",
-            "url": f"{base_url}#{post_div.get_text(strip=True)}" if post_div else base_url
+    parsed = []
+    for post in soup.select(config["post_selector"]):
+        content = post.select_one(config["content_selector"])
+        date = post.select_one(config["date_selector"])
+        number = post.select_one(config["post_number_selector"])
+        parsed.append({
+            "number": number.get_text(strip=True) if number else "N/A",
+            "date": date.get("datetime") if date else "Unknown",
+            "content": content.get_text(strip=True) if content else "No content",
+            "url": f"{base_url}#{number.get_text(strip=True)}" if number else base_url
         })
-
-    return parsed_posts
+    return parsed
 
 def ai_request(prompt, model):
     """Reusable AI interaction function."""
@@ -82,47 +91,39 @@ def ai_request(prompt, model):
     return response['choices'][0]['message']['content'].strip()
 
 def analyze_posts(posts, model):
-    """Analyze posts using OpenAI API with post number citations."""
-    chunk_size = 50
-    chunks = ["\n".join([f"[{p['number']} | {p['date']}] {p['content']}" for p in posts[i:i + chunk_size]]) for i in range(0, len(posts), chunk_size)]
+    """Analyze scraped posts with OpenAI."""
+    chunks = ["\n".join(f"[{p['number']} | {p['date']}] {p['content']}" for p in posts[i:i + CHUNK_SIZE]) for i in range(0, len(posts), CHUNK_SIZE)]
     insights = []
-
     for chunk in chunks:
-        messages = [
-            {"role": "system", "content": "You are a deal analysis expert summarizing forum discussions."},
-            {"role": "user", "content": (
-                "Analyze the following forum posts related to a deal thread. Extract only the critical information:\n"
-                "1. Specific deals or unique offers with post numbers.\n"
-                "2. Navigation paths (departments contacted, codes used) with post numbers.\n"
-                "3. Fringe deals or extras received, with post numbers.\n"
-                "4. Evaluate multiple deal options and suggest the best value.\n"
-                "5. Identify risks or drawbacks.\n\n"
-                f"{chunk}"
-            )}
-        ]
-        response = openai.ChatCompletion.create(
-            model=model,
-            messages=messages
+        prompt = (
+            "Analyze the following forum posts. Extract:\n"
+            "1. Deals, navigation paths, and fringe benefits (with post numbers).\n"
+            "2. The best deal and relevant risks.\n\n"
+            f"{chunk}"
         )
-        insights.append(response['choices'][0]['message']['content'].strip())
-
+        insights.append(ai_request(prompt, model))
     return "\n\n".join(insights)
 
 # Streamlit UI
 st.title("Forum Analyzer")
 
-# URL Input Box and Pages to Scrape
+# Input for forum URL with 'Paste' and 'Go' buttons
+url_input = st.text_input("Enter URL:", key="url_input", help="Paste the URL of the forum thread you want to analyze.")
+
+# Input for pages to scrape and model selection, both on the same line
 col1, col2 = st.columns([1, 1])  # Set columns to be equal width
 with col1:
-    url_input = st.text_input("Enter URL:", key="url_input", placeholder="Paste URL here", help="Enter or paste the URL of the forum thread you want to analyze.")
+    pages_input = st.text_input(
+        "Pages to scrape:", 
+        "All", 
+        help="Number of pages to scrape. Type 'All' for all pages. You can enter a specific number (e.g., 10) or leave it blank for 'All'."
+    )
 with col2:
-    pages_input = st.text_input("Pages to scrape:", "All", help="Number of pages to scrape. Type 'All' for all pages. Enter a number for specific pages.")
-
-model_choice = st.selectbox(
-    "Choose a model:",
-    ["gpt-4", "gpt-3.5-turbo"],
-    help="GPT-4 is more accurate, while GPT-3.5 is faster."
-)
+    model_choice = st.selectbox(
+        "Choose a model:", 
+        ["gpt-4", "gpt-3.5-turbo"], 
+        help="Choose the model for analysis. GPT-4 provides better accuracy but is slower, while GPT-3.5 is faster and more efficient."
+    )
 
 # Main scraping and analysis logic
 if url_input and st.button("Start"):
@@ -137,3 +138,4 @@ if url_input and st.button("Start"):
             st.write(analyze_posts(posts, model_choice))
         except Exception as e:
             st.error(f"An error occurred: {e}")
+
