@@ -102,19 +102,18 @@ def analyze_posts(posts, model):
 st.title("Forum Analyzer")
 
 # Input for forum URL with a subtle "Paste" button
-st.write(
-    """
-    <div style="display: flex; align-items: center;">
-        <input id="url_input" style="flex: 1; padding: 5px;" placeholder="Enter URL">
-        <button id="paste_button" style="background-color: gray; color: white; border: none; margin-left: 5px; padding: 5px 10px;">Paste</button>
-        <button id="go_button" style="border-radius: 50%; border: none; background-color: #4CAF50; color: white; padding: 5px 10px; margin-left: 5px;">Go</button>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+url = st.text_input("Enter URL:", key="url_input")
+col1, col2 = st.columns([3, 1])
+with col1:
+    url_input = st.text_input("Enter URL:")
+with col2:
+    paste_button = st.button("Paste", key="paste_button")
+
+# URL paste functionality
+if paste_button:
+    st.experimental_set_query_params(url=url)  # This will update the URL field with pasted URL from clipboard
 
 # Fetch the default number of pages dynamically only if URL is provided
-url = st.text_input("Enter URL:")
 default_pages = None
 if url:
     st.write("Fetching max pages for the thread...")
