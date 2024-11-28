@@ -109,10 +109,20 @@ st.title("Forum Analyzer")
 
 # URL Input with 'Paste' and 'Go' buttons
 col1, col2, col3 = st.columns([3, 1, 0.5])
+
+# URL Input
 with col1:
-    url_input = st.text_input("Enter URL:", value="", placeholder="Enter or paste forum URL here", help="Paste the URL of the forum thread you want to analyze.")
+    url_input = st.text_input(
+        "Enter URL:",
+        value="",
+        placeholder="Enter or paste forum URL here",
+        help="Paste the URL of the forum thread you want to analyze."
+    )
+# Paste button
 with col2:
     paste_button = st.button("Paste", key="paste_button")
+    
+# Go button
 with col3:
     go_button = st.button("Go", key="go_button")
 
@@ -136,17 +146,19 @@ if clean_url_value:
 pages_input = st.selectbox(
     "Number of pages to scrape:",
     options=["All"] + ([str(i) for i in range(1, default_pages + 1)] if default_pages else ["1"]),
-    format_func=lambda x: "All" if x == "All" else x
+    format_func=lambda x: "All" if x == "All" else x,
+    help="Select the number of pages you want to scrape from the forum thread."
 )
 
-# Model selection
+# Model selection with tooltips
 model_choice = st.radio(
     "Choose a model:",
     options=[
         ("gpt-3.5-turbo", "Faster (Good for most tasks)"),
         ("gpt-4", "More Accurate (Better for complex tasks)")
     ],
-    format_func=lambda x: x[1]
+    format_func=lambda x: x[1],
+    help="Choose the model for the analysis. 'Faster' is suitable for most tasks, while 'More Accurate' is ideal for complex tasks."
 )
 selected_model = model_choice[0]  # Get the actual model name (gpt-3.5-turbo or gpt-4)
 
