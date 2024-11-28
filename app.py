@@ -3,37 +3,10 @@ import aiohttp
 import asyncio
 import openai
 from bs4 import BeautifulSoup
-import json
-import os
 import re
 from time import time
 from datetime import timedelta
 from urllib.parse import urlparse, urlunparse
-
-# Define default config values
-default_config = {
-    "pagination_selector": ".pagination a",
-    "post_selector": ".post",
-    "content_selector": ".content",
-    "date_selector": ".date",
-    "post_number_selector": ".post-number"
-}
-
-# Path to the config.json file
-config_file_path = "config.json"
-
-# Function to load or create config file
-def load_config():
-    if not os.path.exists(config_file_path):
-        # If config.json doesn't exist, create it with default values
-        with open(config_file_path, "w") as f:
-            json.dump(default_config, f, indent=4)
-        st.warning("config.json file not found. A new one has been created with default values.")
-    with open(config_file_path, "r") as f:
-        return json.load(f)
-
-# Load the config (either from existing or newly created)
-config = load_config()
 
 # Global constants
 openai.api_key = st.secrets["OPENAI_API_KEY"]
@@ -69,7 +42,7 @@ async def get_max_pages(base_url):
         if not page_content:
             return 1
         soup = BeautifulSoup(page_content, "lxml")
-        page_links = soup.select(config["pagination_selector"])
+        page_links = soup.find_all("a", href=True, string=re.compile(r"^\d+$"))
         return max((int(link.get_text(strip=True)) for link in page_links if link.get_text(strip=True).isdigit()), default=1)
 
 async def scrape_pages(base_url, total_pages):
@@ -90,10 +63,10 @@ def parse_posts(page_content, base_url):
         return []
     soup = BeautifulSoup(page_content, "lxml")
     parsed = []
-    for post in soup.select(config["post_selector"]):
-        content = post.select_one(config["content_selector"])
-        date = post.select_one(config["date_selector"])
-        number = post.select_one(config["post_number_selector"])
+    for post in soup.find_all("div", class_="post_body"):  # Adjusted to find post body
+        content = post.find("div", class_="content")
+        date = post.find("time")
+        number = post.find("span", class_="post_number")
         parsed.append({
             "number": number.get_text(strip=True) if number else "N/A",
             "date": date.get("datetime") if date else "Unknown",
