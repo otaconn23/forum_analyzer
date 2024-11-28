@@ -1,14 +1,11 @@
 import aiohttp
 import asyncio
-import streamlit as st
 from bs4 import BeautifulSoup
 import re
-from time import time
-from datetime import datetime
 import openai
 
 # OpenAI API key
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+openai.api_key = "your-openai-api-key"
 
 # Headers to mimic a browser request
 headers = {
@@ -18,24 +15,31 @@ headers = {
 # Semaphore to throttle requests
 semaphore = asyncio.Semaphore(200)
 
-# Async function to fetch a webpage
 async def fetch_page(session, url):
+    """Fetch a single page."""
     async with semaphore:
         async with session.get(url, headers=headers) as response:
             return await response.text()
 
-# Determine the maximum number of pages to scrape
 async def get_max_pages(base_url):
+    """Determine the maximum number of pages."""
     async with aiohttp.ClientSession(headers=headers) as session:
         page_content = await fetch_page(session, base_url)
         soup = BeautifulSoup(page_content, 'html.parser')
-        last_page = soup.find('a', string=re.compile(r'\d+$'))
-        if last_page:
-            return int(last_page.string)
-        return 1
 
-# Scrape posts from a single page
+        # Look for pagination_last to get the max page number
+        last_page_link = soup.select_one("a.pagination_last")
+        if last_page_link:
+            match = re.search(r"\d+", last_page_link.get("href", ""))
+            if match:
+                return int(match.group(0))
+        
+        # If pagination_last is not found, fall back to pagination_pages
+        page_links = soup.select("ul.pagination_pages a")
+        return max((int(a.get_text(strip=True)) for a in page_links if a.get_text(strip=True).isdigit()), default=1)
+
 async def scrape_page(session, page_num, base_url):
+    """Scrape a single page for posts."""
     page_url = f"{base_url}/{page_num}/"
     page_content = await fetch_page(session, page_url)
     soup = BeautifulSoup(page_content, 'html.parser')
@@ -43,18 +47,25 @@ async def scrape_page(session, page_num, base_url):
 
     posts_details = []
     for post in posts:
+        # Extract content
         content_div = post.find('div', class_='content')
         content = content_div.get_text(strip=True) if content_div else "No content"
-        post_number = post.get('data-post-number')  # Adjust based on forum structure
-        timestamp_div = post.find('time')
-        timestamp = timestamp_div.get('datetime') if timestamp_div else "Unknown"
-        post_link = post.find('a', class_='post_permalink')
-        post_url = post_link.get('href') if post_link else f"{base_url}#{post_number}"
-        posts_details.append((post_number, timestamp, post_url, content))
+
+        # Extract post number and URL
+        permalink = post.find('a', class_='dateline_permalink')
+        post_number = permalink.get_text(strip=True) if permalink else "N/A"
+        post_url = permalink.get("href") if permalink else f"{base_url}#{post_number}"
+
+        # Extract timestamp
+        timestamp_div = post.find('span', class_='dateline_timestamp')
+        timestamp = timestamp_div.get_text(strip=True) if timestamp_div else "Unknown"
+
+        # Append the details as a formatted string
+        posts_details.append(f"[Post {post_number or 'N/A'}]({post_url})\n{timestamp}\n{content}")
     return posts_details
 
-# Scrape multiple pages
 async def scrape_forum_pages(base_url, pages_to_scrape):
+    """Scrape all specified pages and keep posts in memory."""
     async with aiohttp.ClientSession(headers=headers) as session:
         tasks = [
             scrape_page(session, page_num, base_url)
@@ -65,18 +76,18 @@ async def scrape_forum_pages(base_url, pages_to_scrape):
         for i, task in enumerate(asyncio.as_completed(tasks), start=1):
             page_posts = await task
             all_posts.extend(page_posts)
-            st.progress(i / pages_to_scrape)  # Update progress in Streamlit
+            print(f"Scraped page {i}/{pages_to_scrape}")
         return all_posts
 
-# Analyze posts with AI for decision-oriented insights
-def ai_analyze_posts(posts):
+def analyze_posts(posts_content):
+    """Generate AI-driven insights from the in-memory posts."""
     prompt = (
-        "You are a decision-making assistant. Analyze the following forum posts "
-        "and provide actionable insights. Extract:\n"
-        "1. Key fringe deals or opportunities discussed.\n"
-        "2. Concise recommendations based on the data.\n"
-        "3. Summary of any risks or drawbacks.\n\n"
-        + "\n\n".join(f"{num}\n{timestamp}\n{url}\n{content}" for num, timestamp, url, content in posts)
+        "You are a decision-making assistant. Based on the following forum posts, "
+        "generate actionable insights. Provide:\n"
+        "1. Key deals or opportunities discussed.\n"
+        "2. Risks or drawbacks mentioned.\n"
+        "3. A concise, fact-based recommendation.\n\n"
+        f"{posts_content}"
     )
     response = openai.ChatCompletion.create(
         model="gpt-4",
@@ -87,40 +98,27 @@ def ai_analyze_posts(posts):
     )
     return response["choices"][0]["message"]["content"]
 
-# Streamlit UI for the app
-st.title("Decision-Oriented Forum Scraper & Analyzer")
+async def main():
+    """Main function to scrape forum data and generate insights."""
+    base_url = input("Please enter the forum URL (without trailing page number): ")
+    max_pages = await get_max_pages(base_url)
+    
+    # Allow user to specify number of pages, default to max_pages
+    pages_input = input(f"How many pages to scrape? (default={max_pages}): ").strip()
+    pages_to_scrape = int(pages_input) if pages_input else max_pages
 
-# Input URL and number of pages
-base_url = st.text_input("Enter the forum URL:")
-pages_input = st.text_input("Number of pages to scrape (leave blank for all):")
+    print("Scraping forum data...")
+    posts = await scrape_forum_pages(base_url, pages_to_scrape)
 
-if st.button("Scrape and Analyze"):
-    if base_url:
-        with st.spinner("Scraping forum data..."):
-            try:
-                max_pages = asyncio.run(get_max_pages(base_url))
-                pages_to_scrape = int(pages_input) if pages_input else max_pages
-                posts = asyncio.run(scrape_forum_pages(base_url, pages_to_scrape))
-                st.success(f"Scraped {len(posts)} posts from {pages_to_scrape} pages.")
+    # Join all posts for AI processing
+    posts_content = "\n---\n".join(posts)
+    print("Generating AI analysis...")
 
-                # Save scraped posts to a text file
-                with open("scraped_posts.txt", "w", encoding="utf-8") as file:
-                    file.write("\n---\n".join(
-                        f"{num or 'N/A'}\n{timestamp}\n{url}\n{content}"
-                        for num, timestamp, url, content in posts
-                    ))
+    # AI analysis
+    analysis = analyze_posts(posts_content)
+    print("\nAI Analysis:\n")
+    print(analysis)
 
-                # Analyze posts using AI
-                with st.spinner("Analyzing posts with AI..."):
-                    analysis = ai_analyze_posts(posts)
-                st.subheader("AI Analysis")
-                st.write(analysis)
-
-                # Optional: Save AI analysis to a file
-                with open("analysis.txt", "w", encoding="utf-8") as file:
-                    file.write(analysis)
-
-            except Exception as e:
-                st.error(f"An error occurred: {e}")
-    else:
-        st.error("Please enter a valid URL.")
+# Run the main function
+loop = asyncio.get_event_loop()
+loop.run_until_complete(main())
