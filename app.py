@@ -14,7 +14,7 @@ openai.api_key = st.secrets["OPENAI_API_KEY"]
 # Constants for async fetching and AI processing
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 SEMAPHORE_LIMIT = 100
-CHUNK_SIZE = 5  # We can try reducing the chunk size to fit within the token limit
+CHUNK_SIZE = 50
 
 # Utility: Time formatting
 def format_time(seconds):
@@ -89,22 +89,16 @@ def ai_request(prompt, model):
 
 def analyze_posts(posts, model):
     """Analyze scraped posts with OpenAI."""
+    chunks = ["\n".join(f"[{p['number']} | {p['date']}] {p['content']}" for p in posts[i:i + CHUNK_SIZE]) for i in range(0, len(posts), CHUNK_SIZE)]
     insights = []
-    # Chunk the posts into smaller segments to avoid token overflow
-    chunked_posts = [posts[i:i + CHUNK_SIZE] for i in range(0, len(posts), CHUNK_SIZE)]
-    
-    for chunk in chunked_posts:
-        chunk_text = "\n".join(
-            [f"[{p['number']} | {p['date']}] {p['content']}" for p in chunk]
-        )
+    for chunk in chunks:
         prompt = (
             "Analyze the following forum posts. Extract:\n"
             "1. Deals, navigation paths, and fringe benefits (with post numbers).\n"
             "2. The best deal and relevant risks.\n\n"
-            f"{chunk_text}"
+            f"{chunk}"
         )
         insights.append(ai_request(prompt, model))
-    
     return "\n\n".join(insights)
 
 # Streamlit UI
@@ -137,11 +131,29 @@ if url_input and st.button("Start"):
             
             # Initialize progress bar
             progress_bar = st.progress(0)
-
+            elapsed_time = time()
+            pages_scraped = 0
+            
             # Define a callback to update the progress bar
             def progress_callback(page_num):
-                progress_bar.progress(page_num / pages_to_scrape)
-
+                nonlocal pages_scraped, elapsed_time
+                pages_scraped += 1
+                elapsed_seconds = time() - elapsed_time
+                pages_per_second = pages_scraped / elapsed_seconds if elapsed_seconds > 0 else 0
+                remaining_pages = pages_to_scrape - pages_scraped
+                remaining_time = remaining_pages / pages_per_second if pages_per_second > 0 else 0
+                progress_percent = (pages_scraped / pages_to_scrape) * 100
+                
+                # Update the progress bar and show stats
+                progress_bar.progress(progress_percent)
+                elapsed_time_str = format_time(elapsed_seconds)
+                remaining_time_str = format_time(remaining_time)
+                
+                # Show stats below the progress bar
+                st.write(f"Progress: {pages_scraped}/{pages_to_scrape} pages ({progress_percent:.2f}%)")
+                st.write(f"Elapsed: {elapsed_time_str} | Remaining: {remaining_time_str} | {pages_per_second:.2f} pages/s")
+            
+            # Start scraping
             scraped_pages = asyncio.run(scrape_pages(url, pages_to_scrape, progress_callback))
             posts = [post for _, content in scraped_pages for post in parse_posts(content, url)]
             st.write(f"Processed {len(posts)} posts from {pages_to_scrape} pages.")
