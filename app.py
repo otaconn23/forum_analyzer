@@ -73,12 +73,14 @@ def analyze_posts(posts):
         "4. Ignore outdated or irrelevant information.\n\n"
         f"{combined_posts}"
     )
-    response = openai.Completion.create(
-        engine="text-davinci-003",
-        prompt=prompt,
-        max_tokens=500
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "You are an assistant specialized in summarizing forum discussions."},
+            {"role": "user", "content": prompt}
+        ]
     )
-    return response.choices[0].text.strip()
+    return response['choices'][0]['message']['content'].strip()
 
 
 # Streamlit app interface
@@ -107,13 +109,15 @@ if url:
                     f"Based on the following forum posts:\n\n{posts[:50]}\n\n"
                     f"Answer the user's question: {user_question}"
                 )
-                followup_response = openai.Completion.create(
-                    engine="text-davinci-003",
-                    prompt=followup_prompt,
-                    max_tokens=300
+                followup_response = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "You are an assistant specialized in answering questions about forum discussions."},
+                        {"role": "user", "content": followup_prompt}
+                    ]
                 )
                 st.subheader("Follow-up Answer:")
-                st.write(followup_response.choices[0].text.strip())
+                st.write(followup_response['choices'][0]['message']['content'].strip())
         else:
             st.warning("No posts found. Please check the URL or try a different forum.")
     except Exception as e:
