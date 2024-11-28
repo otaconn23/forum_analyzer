@@ -109,9 +109,17 @@ url_input = st.text_input("Enter URL:", key="url_input", help="Paste the URL of 
 # Input for pages to scrape and model selection, both on the same line
 col1, col2 = st.columns([1, 1])  # Set columns to be equal width
 with col1:
-    pages_input = st.text_input("Pages to scrape:", "All", help="Number of pages to scrape. Type 'All' for all pages.")
+    pages_input = st.text_input(
+        "Pages to scrape:", 
+        "All", 
+        help="Number of pages to scrape. Type 'All' for all pages. You can enter a specific number (e.g., 10) or leave it blank for 'All'."
+    )
 with col2:
-    model_choice = st.selectbox("Model:", ["gpt-4", "gpt-3.5-turbo"], help="Choose the model for analysis.")
+    model_choice = st.selectbox(
+        "Choose a model:", 
+        ["gpt-4", "gpt-3.5-turbo"], 
+        help="Choose the model for analysis. GPT-4 provides better accuracy but is slower, while GPT-3.5 is faster and more efficient."
+    )
 
 # Main scraping and analysis logic
 if url_input and st.button("Start"):
