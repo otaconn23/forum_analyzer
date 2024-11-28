@@ -119,6 +119,6 @@ async def main():
     print("\nAI Analysis:\n")
     print(analysis)
 
-# Run the main function
-loop = asyncio.get_event_loop()
-loop.run_until_complete(main())
+# Updated execution for Python 3.12+
+if __name__ == "__main__":
+    asyncio.run(main())
