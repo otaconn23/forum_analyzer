@@ -113,10 +113,17 @@ st.write(
     unsafe_allow_html=True
 )
 
-# Fetch the default number of pages dynamically
-default_pages = asyncio.run(get_max_pages(url)) if url else None
-if default_pages:
-    st.write(f"Max pages detected: {default_pages}")
+# Fetch the default number of pages dynamically only if URL is provided
+url = st.text_input("Enter URL:")
+default_pages = None
+if url:
+    st.write("Fetching max pages for the thread...")
+    try:
+        default_pages = asyncio.run(get_max_pages(clean_url(url)))
+        st.write(f"Max pages detected: {default_pages}")
+    except Exception as e:
+        st.warning(f"Could not determine max pages: {e}")
+        default_pages = 1
 
 # Input for number of pages with default option "All"
 pages_input = st.selectbox(
@@ -130,7 +137,7 @@ if url and st.button("Start"):
     with st.spinner("Processing..."):
         try:
             pages_to_scrape = default_pages if pages_input == "All" else int(pages_input)
-            scraped_pages = asyncio.run(scrape_pages(url, pages_to_scrape))
+            scraped_pages = asyncio.run(scrape_pages(clean_url(url), pages_to_scrape))
             posts = [post for _, content in scraped_pages for post in parse_posts(content, url)]
             st.write(f"Processed {len(posts)} posts from {pages_to_scrape} pages.")
             st.subheader("Analysis Summary")
