@@ -108,9 +108,6 @@ def chat_with_ai(prompt, model):
 st.title("Forum Analyzer")
 
 # URL Input with 'Paste' and 'Go' buttons
-url_input = st.text_input("Enter URL:", key="url_input", help="Paste the URL of the forum thread you want to analyze.")
-
-# Display 'Paste' and 'Go' buttons
 col1, col2, col3 = st.columns([3, 1, 0.5])
 with col1:
     url_input = st.text_input("Enter URL:", value="", placeholder="Enter or paste forum URL here", help="Paste the URL of the forum thread you want to analyze.")
@@ -179,4 +176,3 @@ if clean_url_value and go_button:
                 st.warning("No posts found. Please check the URL.")
         except Exception as e:
             st.error(f"An error occurred: {e}")
-
