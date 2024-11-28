@@ -1,4 +1,4 @@
 streamlit
 aiohttp
 beautifulsoup4
-openai
+openai>=1.55.0
