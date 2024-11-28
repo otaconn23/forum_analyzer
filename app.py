@@ -26,14 +26,11 @@ async def get_max_pages_async(base_url):
     async with aiohttp.ClientSession(headers=headers) as session:
         page_content = await fetch_page_async(session, base_url)
         soup = BeautifulSoup(page_content, "lxml")  # Use lxml parser
-        
-        # Find all page links with numbers
-        page_numbers = []
-        for link in soup.find_all("a", href=True):
-            text = link.get_text(strip=True)
-            if text.isdigit():
-                page_numbers.append(int(text))
-        
+
+        # Find all pagination links
+        pagination_links = soup.find_all("a", href=True, string=re.compile(r"^\d+$"))
+        page_numbers = [int(link.get_text(strip=True)) for link in pagination_links if link.get_text(strip=True).isdigit()]
+
         # Return the maximum page number or 1 if not found
         return max(page_numbers) if page_numbers else 1
 
@@ -128,7 +125,7 @@ if url and pages_input:
         try:
             pages_to_scrape = default_pages if pages_input == "all" else int(pages_input)
             page_contents = asyncio.run(scrape_forum_pages_async(url, pages_to_scrape))
-            posts = [post for page in page_contents for post in parse_posts(page)]
+            posts = list(set(post for page in page_contents for post in parse_posts(page)))
 
             if posts:
                 st.write(f"Scraped {len(posts)} posts!")
