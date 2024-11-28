@@ -102,7 +102,8 @@ def analyze_posts(posts, model):
 st.title("Forum Analyzer")
 
 # Input for forum URL with a subtle "Paste" button
-url = st.text_input("Enter URL:", key="url_input")
+url_input = st.text_input("Enter URL:", key="url_input", help="Paste the URL of the forum thread you want to analyze.")
+
 col1, col2 = st.columns([3, 1])
 with col1:
     url_input = st.text_input("Enter URL:")
@@ -111,14 +112,14 @@ with col2:
 
 # URL paste functionality
 if paste_button:
-    st.experimental_set_query_params(url=url)  # This will update the URL field with pasted URL from clipboard
+    st.experimental_set_query_params(url=url_input)  # This will update the URL field with pasted URL from clipboard
 
 # Fetch the default number of pages dynamically only if URL is provided
 default_pages = None
-if url:
+if url_input:
     st.write("Fetching max pages for the thread...")
     try:
-        default_pages = asyncio.run(get_max_pages(clean_url(url)))
+        default_pages = asyncio.run(get_max_pages(clean_url(url_input)))
         st.write(f"Max pages detected: {default_pages}")
     except Exception as e:
         st.warning(f"Could not determine max pages: {e}")
@@ -132,12 +133,12 @@ pages_input = st.selectbox(
 model_choice = st.radio("Model:", [("gpt-4", "Accurate (Default)"), ("gpt-3.5-turbo", "Faster")], format_func=lambda x: x[1])
 
 # Main scraping and analysis logic
-if url and st.button("Start"):
+if url_input and st.button("Start"):
     with st.spinner("Processing..."):
         try:
             pages_to_scrape = default_pages if pages_input == "All" else int(pages_input)
-            scraped_pages = asyncio.run(scrape_pages(clean_url(url), pages_to_scrape))
-            posts = [post for _, content in scraped_pages for post in parse_posts(content, url)]
+            scraped_pages = asyncio.run(scrape_pages(clean_url(url_input), pages_to_scrape))
+            posts = [post for _, content in scraped_pages for post in parse_posts(content, url_input)]
             st.write(f"Processed {len(posts)} posts from {pages_to_scrape} pages.")
             st.subheader("Analysis Summary")
             st.write(analyze_posts(posts, model_choice[0]))
