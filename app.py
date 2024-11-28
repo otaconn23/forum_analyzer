@@ -3,6 +3,7 @@ import asyncio
 from bs4 import BeautifulSoup
 import re
 import openai
+import streamlit as st
 
 # OpenAI API key
 openai.api_key = "your-openai-api-key"
@@ -76,7 +77,7 @@ async def scrape_forum_pages(base_url, pages_to_scrape):
         for i, task in enumerate(asyncio.as_completed(tasks), start=1):
             page_posts = await task
             all_posts.extend(page_posts)
-            print(f"Scraped page {i}/{pages_to_scrape}")
+            st.write(f"Scraped page {i}/{pages_to_scrape}")
         return all_posts
 
 def analyze_posts(posts_content):
@@ -98,27 +99,36 @@ def analyze_posts(posts_content):
     )
     return response["choices"][0]["message"]["content"]
 
-async def main():
-    """Main function to scrape forum data and generate insights."""
-    base_url = input("Please enter the forum URL (without trailing page number): ")
-    max_pages = await get_max_pages(base_url)
+async def run_app():
+    """Run the scraping and AI analysis app with Streamlit."""
+    st.title("Forum Scraper & AI Analyzer")
     
-    # Allow user to specify number of pages, default to max_pages
-    pages_input = input(f"How many pages to scrape? (default={max_pages}): ").strip()
-    pages_to_scrape = int(pages_input) if pages_input else max_pages
+    # Inputs
+    base_url = st.text_input("Enter the forum URL (without trailing page number):")
+    pages_input = st.text_input("How many pages to scrape? (leave blank for default):")
+    
+    if st.button("Start Scraping"):
+        if not base_url:
+            st.error("Please enter a valid forum URL.")
+            return
+        
+        st.write("Determining maximum pages...")
+        max_pages = await get_max_pages(base_url)
+        pages_to_scrape = int(pages_input) if pages_input.isdigit() else max_pages
 
-    print("Scraping forum data...")
-    posts = await scrape_forum_pages(base_url, pages_to_scrape)
+        st.write(f"Scraping {pages_to_scrape} pages...")
+        posts = await scrape_forum_pages(base_url, pages_to_scrape)
 
-    # Join all posts for AI processing
-    posts_content = "\n---\n".join(posts)
-    print("Generating AI analysis...")
+        st.write(f"Scraped {len(posts)} posts. Generating AI analysis...")
+        posts_content = "\n---\n".join(posts)
+        analysis = analyze_posts(posts_content)
 
-    # AI analysis
-    analysis = analyze_posts(posts_content)
-    print("\nAI Analysis:\n")
-    print(analysis)
+        st.subheader("AI Analysis")
+        st.write(analysis)
 
-# Updated execution for Python 3.12+
+# Streamlit-compatible execution
+def main():
+    asyncio.run(run_app())
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
