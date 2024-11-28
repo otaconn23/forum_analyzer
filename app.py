@@ -3,45 +3,118 @@ import aiohttp
 import asyncio
 from bs4 import BeautifulSoup
 import openai
+import re
+from datetime import datetime
 
 # Configure OpenAI API key
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-# App title
-st.title("Forum Analyzer")
+# Headers to mimic a browser request
+headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+}
 
-# User input for the forum URL
-url = st.text_input("Enter the forum URL to analyze:")
+semaphore = asyncio.Semaphore(50)  # Limit concurrency for safety
 
-# Fetch and process forum data
-async def fetch_forum_data(url):
-    async with aiohttp.ClientSession() as session:
+
+# Function to fetch a single page
+async def fetch_page(session, url):
+    async with semaphore:
         async with session.get(url) as response:
-            html = await response.text()
-            soup = BeautifulSoup(html, "html.parser")
-            # Extract forum posts (modify selectors based on forum structure)
-            posts = soup.find_all("div", class_="post-content")  # Example: update for actual forum
-            return [post.get_text(strip=True) for post in posts]
+            return await response.text()
 
-# If a URL is provided, fetch and analyze the data
+
+# Function to determine the maximum number of pages
+async def get_max_pages(base_url):
+    async with aiohttp.ClientSession(headers=headers) as session:
+        page_content = await fetch_page(session, base_url)
+        soup = BeautifulSoup(page_content, "html.parser")
+        last_page = soup.find("a", string=re.compile(r"\d+$"))
+        if last_page:
+            return int(last_page.string)
+        return 1
+
+
+# Function to scrape a single page
+async def scrape_page(session, page_num, base_url):
+    page_url = f"{base_url}/{page_num}/"
+    page_content = await fetch_page(session, page_url)
+    soup = BeautifulSoup(page_content, "html.parser")
+    posts = soup.find_all("section", class_="post_body")
+    posts_content = []
+    for post in posts:
+        content_div = post.find("div", class_="content")
+        if content_div:
+            posts_content.append(content_div.get_text(strip=True))
+    return posts_content
+
+
+# Function to scrape all forum pages
+async def scrape_forum_pages(base_url, pages_to_scrape=None):
+    max_pages = await get_max_pages(base_url)
+    pages_to_scrape = pages_to_scrape or max_pages
+    async with aiohttp.ClientSession(headers=headers) as session:
+        tasks = [
+            scrape_page(session, page_num, base_url)
+            for page_num in range(1, pages_to_scrape + 1)
+        ]
+        results = await asyncio.gather(*tasks)
+    return [post for page_posts in results for post in page_posts]
+
+
+# Function to analyze posts
+def analyze_posts(posts):
+    combined_posts = "\n".join(posts[:50])  # Analyze up to the first 50 posts
+    prompt = (
+        "Analyze the following forum posts. Identify:\n"
+        "1. The deal being offered and its details.\n"
+        "2. User feedback on the deal.\n"
+        "3. Conclusions about whether the deal is worthwhile.\n"
+        "4. Ignore outdated or irrelevant information.\n\n"
+        f"{combined_posts}"
+    )
+    response = openai.Completion.create(
+        engine="text-davinci-003",
+        prompt=prompt,
+        max_tokens=500
+    )
+    return response.choices[0].text.strip()
+
+
+# Streamlit app interface
+st.title("Forum Analyzer")
+url = st.text_input("Enter the forum URL to analyze:")
+pages_to_scrape = st.number_input("Number of pages to scrape (default = all):", min_value=1, step=1, value=1)
+
 if url:
-    st.write("Fetching forum data...")
     try:
-        posts = asyncio.run(fetch_forum_data(url))
+        # Scrape forum data
+        st.write("Fetching and scraping forum posts...")
+        posts = asyncio.run(scrape_forum_pages(url, pages_to_scrape))
         if posts:
-            st.write(f"Fetched {len(posts)} posts.")
+            st.write(f"Scraped {len(posts)} posts!")
             
-            # Summarize using OpenAI
+            # Analyze and summarize posts
             st.write("Analyzing posts with OpenAI...")
-            combined_posts = "\n".join(posts[:5])  # Analyze first 5 posts (for brevity)
-            response = openai.Completion.create(
-                engine="text-davinci-003",
-                prompt=f"Summarize the following forum discussion:\n\n{combined_posts}",
-                max_tokens=300
-            )
-            st.write("Summary:")
-            st.write(response.choices[0].text.strip())
+            summary = analyze_posts(posts)
+            st.subheader("Analysis Summary:")
+            st.write(summary)
+
+            # Interactive chat for follow-ups
+            user_question = st.text_input("Ask a follow-up question about the forum discussion:")
+            if user_question:
+                followup_prompt = (
+                    f"Based on the following forum posts:\n\n{posts[:50]}\n\n"
+                    f"Answer the user's question: {user_question}"
+                )
+                followup_response = openai.Completion.create(
+                    engine="text-davinci-003",
+                    prompt=followup_prompt,
+                    max_tokens=300
+                )
+                st.subheader("Follow-up Answer:")
+                st.write(followup_response.choices[0].text.strip())
         else:
-            st.error("No posts found at the given URL.")
+            st.warning("No posts found. Please check the URL or try a different forum.")
     except Exception as e:
-        st.error(f"Error fetching data: {e}")
+        st.error(f"An error occurred: {e}")
