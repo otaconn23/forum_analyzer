@@ -65,20 +65,20 @@ async def scrape_forum_pages(base_url, pages_to_scrape=None):
 # Function to analyze posts
 def analyze_posts(posts):
     combined_posts = "\n".join(posts[:50])  # Analyze up to the first 50 posts
-    prompt = (
-        "Analyze the following forum posts. Identify:\n"
-        "1. The deal being offered and its details.\n"
-        "2. User feedback on the deal.\n"
-        "3. Conclusions about whether the deal is worthwhile.\n"
-        "4. Ignore outdated or irrelevant information.\n\n"
-        f"{combined_posts}"
-    )
+    messages = [
+        {"role": "system", "content": "You are an assistant specialized in summarizing forum discussions."},
+        {"role": "user", "content": (
+            "Analyze the following forum posts. Identify:\n"
+            "1. The deal being offered and its details.\n"
+            "2. User feedback on the deal.\n"
+            "3. Conclusions about whether the deal is worthwhile.\n"
+            "4. Ignore outdated or irrelevant information.\n\n"
+            f"{combined_posts}"
+        )}
+    ]
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "You are an assistant specialized in summarizing forum discussions."},
-            {"role": "user", "content": prompt}
-        ]
+        messages=messages
     )
     return response['choices'][0]['message']['content'].strip()
 
@@ -105,16 +105,16 @@ if url:
             # Interactive chat for follow-ups
             user_question = st.text_input("Ask a follow-up question about the forum discussion:")
             if user_question:
-                followup_prompt = (
-                    f"Based on the following forum posts:\n\n{posts[:50]}\n\n"
-                    f"Answer the user's question: {user_question}"
-                )
+                followup_messages = [
+                    {"role": "system", "content": "You are an assistant specialized in answering questions about forum discussions."},
+                    {"role": "user", "content": (
+                        f"Based on the following forum posts:\n\n{posts[:50]}\n\n"
+                        f"Answer the user's question: {user_question}"
+                    )}
+                ]
                 followup_response = openai.ChatCompletion.create(
                     model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "You are an assistant specialized in answering questions about forum discussions."},
-                        {"role": "user", "content": followup_prompt}
-                    ]
+                    messages=followup_messages
                 )
                 st.subheader("Follow-up Answer:")
                 st.write(followup_response['choices'][0]['message']['content'].strip())
