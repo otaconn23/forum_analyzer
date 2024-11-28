@@ -36,8 +36,13 @@ async def get_max_pages(base_url):
             return 1
         soup = BeautifulSoup(page_content, "html.parser")
         # Generic detection for pagination links
-        last_page = soup.find("a", string=re.compile(r"\d+$"))
-        return int(last_page.string) if last_page else 1
+        page_links = soup.find_all("a", string=re.compile(r"\d+"))
+        page_numbers = [
+            int(link.get_text(strip=True)) 
+            for link in page_links 
+            if link.get_text(strip=True).isdigit()  # Ensure numeric text
+        ]
+        return max(page_numbers, default=1)
 
 async def scrape_forum_pages(base_url, pages_to_scrape):
     """Scrape pages asynchronously."""
@@ -124,4 +129,4 @@ if url_input and st.button("Start"):
         st.subheader("Analysis Summary")
         st.write(analyze_posts(posts, model_choice))
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"
