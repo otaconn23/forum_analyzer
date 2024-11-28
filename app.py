@@ -4,14 +4,36 @@ import asyncio
 import openai
 from bs4 import BeautifulSoup
 import json
+import os
 import re
 from time import time
 from datetime import timedelta
 from urllib.parse import urlparse, urlunparse
 
-# Load forum-specific config
-with open("config.json", "r") as f:
-    config = json.load(f)
+# Define default config values
+default_config = {
+    "pagination_selector": ".pagination a",
+    "post_selector": ".post",
+    "content_selector": ".content",
+    "date_selector": ".date",
+    "post_number_selector": ".post-number"
+}
+
+# Path to the config.json file
+config_file_path = "config.json"
+
+# Function to load or create config file
+def load_config():
+    if not os.path.exists(config_file_path):
+        # If config.json doesn't exist, create it with default values
+        with open(config_file_path, "w") as f:
+            json.dump(default_config, f, indent=4)
+        st.warning("config.json file not found. A new one has been created with default values.")
+    with open(config_file_path, "r") as f:
+        return json.load(f)
+
+# Load the config (either from existing or newly created)
+config = load_config()
 
 # Global constants
 openai.api_key = st.secrets["OPENAI_API_KEY"]
