@@ -129,4 +129,4 @@ if url_input and st.button("Start"):
         st.subheader("Analysis Summary")
         st.write(analyze_posts(posts, model_choice))
     except Exception as e:
-        st.error(f"
+        st.error(f"Error: {e}")
