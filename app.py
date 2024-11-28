@@ -10,11 +10,12 @@ def test_openai_api_key(api_key):
     """Test the OpenAI API key by making a minimal request."""
     try:
         openai.api_key = api_key
-        # Send a simple request to verify the API key
-        openai.Completion.create(
-            model="text-davinci-003",
-            prompt="Test API connection",
-            max_tokens=5
+        # Use gpt-3.5-turbo or gpt-4 for testing
+        openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "user", "content": "Test API connection"}
+            ]
         )
         return True
     except openai.error.AuthenticationError:
@@ -107,7 +108,7 @@ def analyze_posts(posts_content):
         f"{posts_content}"
     )
     response = openai.ChatCompletion.create(
-        model="gpt-4",
+        model="gpt-4",  # Use gpt-4 or gpt-3.5-turbo
         messages=[
             {"role": "system", "content": "You are a highly skilled analyst focused on delivering concise, actionable insights."},
             {"role": "user", "content": prompt}
