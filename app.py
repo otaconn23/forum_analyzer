@@ -5,8 +5,24 @@ import re
 import openai
 import streamlit as st
 
-# OpenAI API key
-openai.api_key = "your-openai-api-key"
+# Function to test OpenAI API key
+def test_openai_api_key(api_key):
+    """Test the OpenAI API key by making a minimal request."""
+    try:
+        openai.api_key = api_key
+        # Send a simple request to verify the API key
+        openai.Completion.create(
+            model="text-davinci-003",
+            prompt="Test API connection",
+            max_tokens=5
+        )
+        return True
+    except openai.error.AuthenticationError:
+        st.error("Invalid OpenAI API key. Please check your key.")
+        return False
+    except Exception as e:
+        st.error(f"An error occurred while testing the API key: {e}")
+        return False
 
 # Headers to mimic a browser request
 headers = {
@@ -106,13 +122,19 @@ async def run_app():
     # Inputs
     base_url = st.text_input("Enter the forum URL (without trailing page number):")
     pages_input = st.text_input("How many pages to scrape? (leave blank for default):")
+    api_key_input = st.text_input("Enter your OpenAI API Key:", type="password")
     
     if st.button("Start Scraping"):
         if not base_url:
             st.error("Please enter a valid forum URL.")
             return
-        
-        st.write("Determining maximum pages...")
+
+        # Test the API key
+        st.write("Testing OpenAI API key...")
+        if not test_openai_api_key(api_key_input):
+            return  # Stop execution if the key is invalid
+
+        st.write("OpenAI API key is valid. Determining maximum pages...")
         max_pages = await get_max_pages(base_url)
         pages_to_scrape = int(pages_input) if pages_input.isdigit() else max_pages
 
