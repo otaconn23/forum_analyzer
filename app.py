@@ -121,8 +121,8 @@ if url_input and go_button:
     with st.spinner("Processing..."):
         try:
             url = clean_url(url_input)  # Clean the URL
-            pages_to_scrape = int(pages_input) if pages_input != "All" else await get_max_pages(url)
-            scraped_pages = await scrape_pages(url, pages_to_scrape)
+            pages_to_scrape = int(pages_input) if pages_input != "All" else asyncio.run(get_max_pages(url))
+            scraped_pages = asyncio.run(scrape_pages(url, pages_to_scrape))
             posts = [post for _, content in scraped_pages for post in parse_posts(content, url)]
             st.write(f"Processed {len(posts)} posts from {pages_to_scrape} pages.")
             st.subheader("Analysis Summary")
