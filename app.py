@@ -102,11 +102,11 @@ def analyze_posts(posts, model):
 st.title("Forum Analyzer")
 
 # Input for forum URL with a subtle "Paste" button
-url_input = st.text_input("Enter URL:", key="url_input", help="Paste the URL of the forum thread you want to analyze.")
+col1, col2 = st.columns([5, 1])
 
-col1, col2 = st.columns([3, 1])
 with col1:
     url_input = st.text_input("Enter URL:")
+
 with col2:
     paste_button = st.button("Paste", key="paste_button")
 
