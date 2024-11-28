@@ -31,7 +31,6 @@ async def get_max_pages(base_url):
     async with aiohttp.ClientSession(headers=headers) as session:
         page_content = await fetch_page(session, base_url)
         soup = BeautifulSoup(page_content, "lxml")
-        # Modify this based on the forum's pagination structure
         last_page = soup.find("a", string=re.compile(r"\d+$"))
         if last_page:
             return int(last_page.string)
@@ -42,7 +41,6 @@ async def scrape_forum_pages(base_url, pages_to_scrape):
     """Scrapes all forum pages up to the specified number."""
     async with aiohttp.ClientSession(headers=headers, connector=aiohttp.TCPConnector(keepalive_timeout=30)) as session:
         if pages_to_scrape == "all":
-            # Dynamically fetch the maximum number of pages
             max_pages = await get_max_pages(base_url)
             pages_to_scrape = max_pages
 
@@ -80,8 +78,21 @@ def analyze_posts(posts, model):
     return "\n\n".join(summaries)
 
 
+def chat_with_ai(prompt, model):
+    """Interact with OpenAI via a custom prompt."""
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant providing detailed and accurate responses."},
+        {"role": "user", "content": prompt}
+    ]
+    response = openai.ChatCompletion.create(
+        model=model,
+        messages=messages
+    )
+    return response['choices'][0]['message']['content'].strip()
+
+
 # Streamlit app interface
-st.title("Optimized Forum Analyzer")
+st.title("Enhanced Forum Analyzer with Chat")
 
 # Input for forum URL
 url = st.text_input("Enter the forum URL:")
@@ -124,6 +135,15 @@ if url and pages_input:
                 summary = analyze_posts(posts, selected_model)
                 st.subheader("Analysis Summary")
                 st.write(summary)
+
+                # Chat bar for follow-up questions
+                st.subheader("Customize Your Analysis")
+                chat_input = st.text_input("Ask a follow-up question or customize the analysis:")
+                if chat_input:
+                    with st.spinner("Processing your query..."):
+                        chat_response = chat_with_ai(chat_input, selected_model)
+                        st.write(chat_response)
+
             else:
                 st.warning("No posts found. Please check the URL.")
         except Exception as e:
