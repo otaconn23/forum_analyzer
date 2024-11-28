@@ -1,9 +1,9 @@
 import streamlit as st
 import aiohttp
 import asyncio
-from bs4 import BeautifulSoup
 import openai
 import re
+from bs4 import BeautifulSoup
 
 # Configure OpenAI API key
 openai.api_key = st.secrets["OPENAI_API_KEY"]
@@ -11,53 +11,45 @@ openai.api_key = st.secrets["OPENAI_API_KEY"]
 # Headers for web requests
 headers = {"User-Agent": "Mozilla/5.0"}
 
-# Semaphore for concurrency
-semaphore = asyncio.Semaphore(100)
+async def fetch_page_async(session, url):
+    """Fetch a single page asynchronously."""
+    try:
+        async with session.get(url, timeout=10) as response:
+            return await response.text()
+    except asyncio.TimeoutError:
+        return f"Error: Timeout occurred for URL {url}"
+    except Exception as e:
+        return f"Error: {e}"
 
-
-async def fetch_page(session, url):
-    """Fetches a single page."""
-    async with semaphore:
-        try:
-            async with session.get(url, timeout=10) as response:
-                return await response.text()
-        except asyncio.TimeoutError:
-            st.warning(f"Timeout occurred for URL: {url}")
-            return ""
-
-
-async def get_max_pages(base_url):
-    """Fetches the maximum number of pages in the forum thread."""
+async def get_max_pages_async(base_url):
+    """Fetch the maximum number of pages in the forum thread."""
     async with aiohttp.ClientSession(headers=headers) as session:
-        page_content = await fetch_page(session, base_url)
-        soup = BeautifulSoup(page_content, "lxml")
+        page_content = await fetch_page_async(session, base_url)
+        soup = BeautifulSoup(page_content, "lxml")  # Use lxml parser
         last_page = soup.find("a", string=re.compile(r"\d+$"))
         if last_page:
             return int(last_page.string)
         return 1
 
-
-async def scrape_forum_pages(base_url, pages_to_scrape):
-    """Scrapes all forum pages up to the specified number."""
-    async with aiohttp.ClientSession(headers=headers, connector=aiohttp.TCPConnector(keepalive_timeout=30)) as session:
-        if pages_to_scrape == "all":
-            max_pages = await get_max_pages(base_url)
-            pages_to_scrape = max_pages
-
-        tasks = [fetch_page(session, f"{base_url}/{i}") for i in range(1, pages_to_scrape + 1)]
+async def scrape_forum_pages_async(base_url, pages_to_scrape):
+    """Scrape forum pages asynchronously."""
+    async with aiohttp.ClientSession(headers=headers) as session:
+        tasks = [
+            fetch_page_async(session, f"{base_url}/{i}")
+            for i in range(1, pages_to_scrape + 1)
+        ]
         results = await asyncio.gather(*tasks)
-        return [post for result in results if result for post in parse_posts(result)]
-
+    return results
 
 def parse_posts(page_content):
-    """Parses forum posts from page content using the lxml parser."""
-    soup = BeautifulSoup(page_content, "lxml")  # Use lxml parser here
+    """Parses forum posts from page content."""
+    soup = BeautifulSoup(page_content, "lxml")  # Explicitly use lxml parser
     return [post.get_text(strip=True) for post in soup.find_all("section", class_="post_body")]
 
-
 def analyze_posts(posts, model):
-    """Analyzes posts using OpenAI's API with the selected model."""
-    chunks = ["\n".join(posts[i:i + 10]) for i in range(0, len(posts), 10)]
+    """Analyze posts using OpenAI API."""
+    chunk_size = 50  # Adjust chunk size based on OpenAI token limits
+    chunks = ["\n".join(posts[i:i + chunk_size]) for i in range(0, len(posts), chunk_size)]
     summaries = []
     for chunk in chunks:
         messages = [
@@ -77,7 +69,6 @@ def analyze_posts(posts, model):
         summaries.append(response['choices'][0]['message']['content'].strip())
     return "\n\n".join(summaries)
 
-
 def chat_with_ai(prompt, model):
     """Interact with OpenAI via a custom prompt."""
     messages = [
@@ -90,9 +81,8 @@ def chat_with_ai(prompt, model):
     )
     return response['choices'][0]['message']['content'].strip()
 
-
 # Streamlit app interface
-st.title("Enhanced Forum Analyzer with Chat")
+st.title("Enhanced Forum Analyzer with Chat (Async)")
 
 # Input for forum URL
 url = st.text_input("Enter the forum URL:")
@@ -102,7 +92,7 @@ default_pages = None
 if url:
     st.write("Fetching max pages for the thread...")
     try:
-        default_pages = asyncio.run(get_max_pages(url))
+        default_pages = asyncio.run(get_max_pages_async(url))
         st.write(f"Max pages detected: {default_pages}")
     except Exception as e:
         st.warning(f"Could not determine max pages: {e}")
@@ -129,7 +119,10 @@ selected_model = model_choice[0]  # Get the actual model name (gpt-3.5-turbo or 
 if url and pages_input:
     with st.spinner("Scraping and analyzing..."):
         try:
-            posts = asyncio.run(scrape_forum_pages(url, pages_to_scrape="all" if pages_input == "all" else int(pages_input)))
+            pages_to_scrape = default_pages if pages_input == "all" else int(pages_input)
+            page_contents = asyncio.run(scrape_forum_pages_async(url, pages_to_scrape))
+            posts = [post for page in page_contents for post in parse_posts(page)]
+
             if posts:
                 st.write(f"Scraped {len(posts)} posts!")
                 summary = analyze_posts(posts, selected_model)
