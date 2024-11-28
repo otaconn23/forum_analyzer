@@ -41,6 +41,11 @@ async def get_max_pages(base_url):
 async def scrape_forum_pages(base_url, pages_to_scrape):
     """Scrapes all forum pages up to the specified number."""
     async with aiohttp.ClientSession(headers=headers, connector=aiohttp.TCPConnector(keepalive_timeout=30)) as session:
+        if pages_to_scrape == "all":
+            # Dynamically fetch the maximum number of pages
+            max_pages = await get_max_pages(base_url)
+            pages_to_scrape = max_pages
+
         tasks = [fetch_page(session, f"{base_url}/{i}") for i in range(1, pages_to_scrape + 1)]
         results = await asyncio.gather(*tasks)
         return [post for result in results if result for post in parse_posts(result)]
@@ -91,12 +96,11 @@ if url:
     except Exception as e:
         st.warning(f"Could not determine max pages: {e}")
 
-# Input for number of pages with default value set to max pages
-pages_to_scrape = st.number_input(
+# Input for number of pages with default option "All"
+pages_input = st.selectbox(
     "Number of pages to scrape:",
-    min_value=1,
-    value=default_pages or 1,  # Default to 1 if max pages cannot be determined
-    step=1
+    options=["all"] + ([str(i) for i in range(1, default_pages + 1)] if default_pages else ["1"]),
+    format_func=lambda x: "All" if x == "all" else x
 )
 
 # Model selection
@@ -111,10 +115,10 @@ model_choice = st.radio(
 selected_model = model_choice[0]  # Get the actual model name (gpt-3.5-turbo or gpt-4)
 
 # Main scraping and analysis logic
-if url and pages_to_scrape:
+if url and pages_input:
     with st.spinner("Scraping and analyzing..."):
         try:
-            posts = asyncio.run(scrape_forum_pages(url, pages_to_scrape))
+            posts = asyncio.run(scrape_forum_pages(url, pages_to_scrape="all" if pages_input == "all" else int(pages_input)))
             if posts:
                 st.write(f"Scraped {len(posts)} posts!")
                 summary = analyze_posts(posts, selected_model)
